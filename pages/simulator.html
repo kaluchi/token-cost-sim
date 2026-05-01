@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>02 · Длительный vs Объёмный контекст — LLM Cost Sim</title>
+</head>
+<body>
+
+<h1>Длительный vs Объёмный контекст</h1>
+<p class="subtitle">Почему «объёмный» контекст (много данных, мало итераций) дешевле «длительного» (мало данных, много итераций)</p>
+
+<div class="thesis">
+  <div class="thesis-icon">⚡</div>
+  <div class="thesis-text">
+    <h3>Два вида нагрузки на контекст</h3>
+    <p>
+      <strong>Длительный контекст</strong> — много мелких итераций, постепенное накопление:
+      60 вызовов с мелкими tool results. Итог: квадратичная переплата за перечитывание.
+      <strong>Объёмный контекст</strong> — мало итераций, но крупный начальный контекст:
+      документация, спецификации, релевантный код загружены сразу.
+      Финальный контекст может быть больше — но счёт ниже,
+      потому что <em>квадрат числа итераций</em> доминирует над линейным размером контекста.
+    </p>
+  </div>
+</div>
+
+<section>
+  <div class="card">
+    <div class="g2">
+      <div>
+        <h2>Модель и цены <span style="font-size:12px;color:var(--muted);font-weight:400">($/MTok)</span></h2>
+        <div class="model-btns">
+          <button class="mbtn active" data-model="sonnet" onclick="setModel('sonnet',this)">Sonnet 4.6 · $3/$15</button>
+          <button class="mbtn" data-model="opus"   onclick="setModel('opus',this)">Opus 4.7 · $5/$25</button>
+          <button class="mbtn" data-model="haiku"  onclick="setModel('haiku',this)">Haiku 4.5 · $1/$5</button>
+          <button class="mbtn" data-model="custom" onclick="setModel('custom',this)">Custom</button>
+        </div>
+        <div class="price-grid">
+          <div class="pf"><label>Input</label><input type="number" id="p_in" value="3" step="0.1" oninput="update()"></div>
+          <div class="pf"><label>Output</label><input type="number" id="p_out" value="15" step="0.5" oninput="update()"></div>
+          <div class="pf"><label>Cache Read</label><input type="number" id="p_cr" value="0.30" step="0.05" oninput="update()"></div>
+          <div class="pf"><label>Cache Write (5min TTL)</label><input type="number" id="p_cw" value="3.75" step="0.1" oninput="update()"></div>
+        </div>
+      </div>
+      <div>
+        <h2>Опции</h2>
+        <div class="toggle-row">
+          <label class="tog"><input type="checkbox" id="useCache" checked onchange="update()"><span class="tog-sl"></span></label>
+          <span style="font-size:13px">Prompt Caching включён</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);line-height:1.65">
+          <strong style="color:var(--muted2)">Вкл:</strong> C_prev читается по ставке Cache Read (~10% Input).<br>
+          <strong style="color:var(--muted2)">Выкл:</strong> весь контекст каждого вызова — по полной Input-ставке.
+        </p>
+        <hr>
+        <div class="toggle-row" style="margin-top:10px">
+          <label class="tog"><input type="checkbox" id="showQuad" checked onchange="update()"><span class="tog-sl"></span></label>
+          <span style="font-size:13px">Показывать «квадратичный фантом» (без кэша)</span>
+        </div>
+        <p style="font-size:11px;color:var(--muted)">Пунктирные линии — как выглядел бы счёт без кэширования.</p>
+        <hr>
+        <button class="reset-btn" onclick="resetToDefaults()">↺ Сбросить все параметры</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="g2">
+    <div class="card ctx1-card">
+      <h2 class="ctx1-label">Длительный контекст</h2>
+      <p class="ctx-subtitle">Много мелких итераций: ошибки → исправления → уточнения → снова ошибки.<br>Мелкие tool results, частые bash-команды, зондирование файловой системы.</p>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Итераций (API-вызовов)</span><span class="sr-val ctx1-label" id="v_c1t">60</span></div><input type="range" id="c1t" min="5" max="200" step="1" value="60" oninput="sv('c1t');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">System prompt (tokens)</span><span class="sr-val ctx1-label" id="v_c1s">2 000</span></div><input type="range" id="c1s" min="0" max="30000" step="500" value="2000" oninput="sv('c1s');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">User message / вызов (tokens)</span><span class="sr-val ctx1-label" id="v_c1u">400</span></div><input type="range" id="c1u" min="50" max="5000" step="50" value="400" oninput="sv('c1u');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Tool results / вызов <em style="color:var(--muted);font-style:normal">← ключевой</em></span><span class="sr-val ctx1-label" id="v_c1r">2 000</span></div><input type="range" id="c1r" min="100" max="30000" step="100" value="2000" oninput="sv('c1r');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Model output / вызов <em style="color:var(--muted);font-style:normal">thinking + ответ</em></span><span class="sr-val ctx1-label" id="v_c1o">800</span></div><input type="range" id="c1o" min="100" max="8000" step="100" value="800" oninput="sv('c1o');update()"></div>
+      <hr class="divider">
+      <div class="g3">
+        <div class="stat"><div class="stat-lbl">Финальный контекст</div><div class="stat-val ctx1-label" id="s_c1fc">—</div><div class="stat-sub">tokens</div></div>
+        <div class="stat"><div class="stat-lbl">Input обработано</div><div class="stat-val ctx1-label" id="s_c1ti">—</div><div class="stat-sub">MTok суммарно</div></div>
+        <div class="stat"><div class="stat-lbl">Стоимость</div><div class="stat-val ctx1-label" id="s_c1cost">—</div><div class="stat-sub">USD</div></div>
+      </div>
+    </div>
+    <div class="card ctx2-card">
+      <h2 class="ctx2-label">Объёмный контекст</h2>
+      <p class="ctx-subtitle">Мало итераций: документация + онбординг-промт загружены сразу.<br>Инструменты выдают релевантную информацию, меньше вопросов к пользователю.</p>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Итераций (API-вызовов)</span><span class="sr-val ctx2-label" id="v_c2t">10</span></div><input type="range" id="c2t" min="1" max="60" step="1" value="10" oninput="sv('c2t');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Начальный контекст: доки + промт (tokens)</span><span class="sr-val ctx2-label" id="v_c2i">250 000</span></div><input type="range" id="c2i" min="5000" max="600000" step="5000" value="250000" oninput="sv('c2i');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">User message / вызов (tokens)</span><span class="sr-val ctx2-label" id="v_c2u">500</span></div><input type="range" id="c2u" min="50" max="5000" step="50" value="500" oninput="sv('c2u');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Tool results / вызов (tokens)</span><span class="sr-val ctx2-label" id="v_c2r">12 000</span></div><input type="range" id="c2r" min="100" max="80000" step="500" value="12000" oninput="sv('c2r');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Model output / вызов <em style="color:var(--muted);font-style:normal">thinking + ответ</em></span><span class="sr-val ctx2-label" id="v_c2o">3 000</span></div><input type="range" id="c2o" min="100" max="10000" step="100" value="3000" oninput="sv('c2o');update()"></div>
+      <hr class="divider">
+      <div class="g3">
+        <div class="stat"><div class="stat-lbl">Финальный контекст</div><div class="stat-val ctx2-label" id="s_c2fc">—</div><div class="stat-sub">tokens</div></div>
+        <div class="stat"><div class="stat-lbl">Input обработано</div><div class="stat-val ctx2-label" id="s_c2ti">—</div><div class="stat-sub">MTok суммарно</div></div>
+        <div class="stat"><div class="stat-lbl">Стоимость</div><div class="stat-val ctx2-label" id="s_c2cost">—</div><div class="stat-sub">USD</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="card">
+    <div class="comp-banner">
+      <div class="big-cost"><div class="big-cost-lbl">Длительный контекст</div><div class="big-cost-val ctx1-label" id="bc1">$—</div><div class="big-cost-detail" id="bc1d">—</div><div id="badge1" class="badge"></div></div>
+      <div class="vs-block"><div class="vs-label">Разница</div><div class="vs-diff" id="vsdiff">—</div><div class="vs-pct" id="vspct">—</div><div style="margin-top:10px;font-size:11px;color:var(--muted)" id="vsratio">—</div></div>
+      <div style="font-size:28px;color:var(--muted)">VS</div>
+      <div class="vs-block"><div class="vs-label">Финальный контекст</div><div class="vs-diff" id="vsctx">—</div><div class="vs-pct" id="vsctxd">—</div></div>
+      <div class="big-cost"><div class="big-cost-lbl">Объёмный контекст</div><div class="big-cost-val ctx2-label" id="bc2">$—</div><div class="big-cost-detail" id="bc2d">—</div><div id="badge2" class="badge"></div></div>
+    </div>
+    <div id="infoBox" class="info-box info-neutral">—</div>
+  </div>
+</section>
+
+<div class="metrics-strip">
+  <div class="mcard"><div class="mcard-lbl">Ctx1 input обработано</div><div class="mcard-val ctx1-label" id="m1ti">—</div><div class="mcard-sub">MTok суммарно</div></div>
+  <div class="mcard"><div class="mcard-lbl">Ctx2 input обработано</div><div class="mcard-val ctx2-label" id="m2ti">—</div><div class="mcard-sub">MTok суммарно</div></div>
+  <div class="mcard"><div class="mcard-lbl">Соотношение input</div><div class="mcard-val" id="mratio">—</div><div class="mcard-sub">Ctx1 / Ctx2</div></div>
+  <div class="mcard"><div class="mcard-lbl">Ctx1 cost / итерацию</div><div class="mcard-val ctx1-label" id="m1pti">—</div><div class="mcard-sub">ср. стоимость вызова</div></div>
+  <div class="mcard"><div class="mcard-lbl">Ctx2 cost / итерацию</div><div class="mcard-val ctx2-label" id="m2pti">—</div><div class="mcard-sub">ср. стоимость вызова</div></div>
+</div>
+
+<section><div class="g2">
+  <div class="card"><div class="chart-title">Накопленные затраты по итерациям</div><div class="chart-sub">Кумулятивный счёт ($) — квадратичный рост виден на кривой Ctx1. Пунктир = без кэша.</div><div class="chart-wrap"><canvas id="chCum"></canvas></div></div>
+  <div class="card"><div class="chart-title">Стоимость каждого отдельного вызова</div><div class="chart-sub">Цена одного API-вызова растёт с каждой итерацией</div><div class="chart-wrap"><canvas id="chTurn"></canvas></div></div>
+</div></section>
+
+<section><div class="g2">
+  <div class="card"><div class="chart-title">Break-even: при каком N₂ Ctx2 становится дороже Ctx1?</div><div class="chart-sub">Янтарная кривая = стоимость Ctx2. Синяя пунктирная = фиксированная стоимость Ctx1.</div><div class="chart-wrap"><canvas id="chBreak"></canvas></div></div>
+  <div class="card"><div class="chart-title">Гранулярность tool results → стоимость Ctx1</div><div class="chart-sub">Стоимость Ctx1 при изменении размера tool results при фиксированном N</div><div class="chart-wrap"><canvas id="chSens"></canvas></div></div>
+</div></section>
+
+<section><div class="g2">
+  <div class="card"><div class="chart-title">Одинаковый финальный контекст — разная «нарезка»</div><div class="chart-sub">Финальный контекст зафиксирован. Меняем N и tool results пропорционально.</div><div class="chart-wrap"><canvas id="chFixed"></canvas></div></div>
+  <div class="card"><div class="chart-title">ROI инвестиции в документацию / онбординг-промт</div><div class="chart-sub">X = начальный контекст Ctx2. Y = минимальный N₁ начиная с которого Ctx2 дешевле.</div><div class="chart-wrap"><canvas id="chROI"></canvas></div></div>
+</div></section>
+
+<section>
+  <div class="card interp">
+    <h2>Интерпретация результатов</h2>
+    <div class="i-h3">Откуда берётся «квадратичная кухня»</div>
+    <p>При каждом API-вызове модель обрабатывает <strong>весь</strong> накопленный контекст. При N вызовах и δ токенах/вызов:</p>
+    <div class="fbox">Σ input_k  ≈  C₀·N + δ·N·(N−1)/2  ≈  δ·N²/2   (квадратично по N)</div>
+    <div class="i-h3">Роль Prompt Caching</div>
+    <div class="fbox">С кэшем: cost_k ≈ C_{k-1} · P_cache_read + Δk · P_input + r_k · P_output
+↳ квадратичный коэффициент уменьшается в 10× (P_cache_read ≈ 0.1 · P_input)</div>
+    <div class="i-h3">Гранулярность tool results</div>
+    <div class="fbox">cost ≈ δ·N²/2 = (X/N)·N²/2 = X·N/2   →   меньше N = дешевле при том же финальном контексте</div>
+    <div class="i-h3">Thinking-токены (Extended Thinking)</div>
+    <p>
+      Thinking-токены биллятся как <strong>output</strong> при генерации и накапливаются в контексте как <strong>input</strong> в следующих вызовах.
+      Слайдер <span class="hl">«Model output / вызов»</span> должен включать оба компонента:
+    </p>
+    <div class="fbox">Model output / вызов  =  thinking-токены  +  видимый ответ
+
+Пример (Opus 4 extended thinking):  8 000 thinking  +  2 000 ответ  =  10 000 total
+→ биллинг: 10 000 × P_output за генерацию
+→ следующий вызов: эти 10 000 читаются из кэша по P_cache_read (~10% цены)</div>
+    <p>
+      Это значит: у моделей с большим thinking-окном
+      квадратичный эффект <em>усиливается</em> — thinking-хвост давит на кэш каждого следующего вызова.
+    </p>
+    <div class="i-h3">Практические рекомендации</div>
+    <ul>
+      <li><span class="hl">Загружайте документацию один раз</span> — с кэшем каждый последующий вызов читает её за ~10% цены</li>
+      <li>Инструменты, возвращающие <span class="hl">крупные блоки за один вызов</span>, дешевле многих мелких</li>
+      <li>Хороший промт снимает неоднозначность до старта — прямая экономия на итерациях</li>
+      <li><span class="hlg">N×2 итерации</span> дороже, чем <span class="hlg">N итераций с 2× бо́льшим контекстом</span></li>
+      <li>Extended Thinking: thinking-токены включай в слайдер «Model output» — без этого симулятор недооценит стоимость</li>
+    </ul>
+    <div class="i-h3">Динамический вывод</div>
+    <div id="dynConclusion">Настрой параметры выше...</div>
+  </div>
+</section>
+
+<script type="module" src="/src/web/main.js"></script>
+</body>
+</html>

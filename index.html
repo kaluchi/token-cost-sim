@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Cost Sim — Обзор</title>
+</head>
+<body>
+
+<div class="home-hero">
+  <div class="home-kicker">LLM Token Cost Simulator</div>
+  <h1>Меньше итераций — меньше счёт</h1>
+  <p class="home-tagline">
+    LLM API stateless: каждый вызов принимает весь контекст с нуля.
+    Ниже четыре интерактивных модели, которые показывают,
+    как это превращает количество вызовов в главный фактор стоимости сеанса.
+  </p>
+</div>
+
+<div class="home-grid" style="grid-template-columns:repeat(2,1fr)">
+
+  <a class="sim-card" href="./pages/quadratic.html" style="--card-accent:#34d399">
+    <div class="sim-num">01</div>
+    <h2>Где прячется x²-парабола</h2>
+    <p class="sim-tagline-txt">
+      Контекст растёт линейно, а суммарный input за сеанс — как парабола.
+      Откуда берётся N² и почему удвоение вызовов учетверяет стоимость.
+    </p>
+    <ul class="sim-insights">
+      <li>Суммарный input растёт как <strong>N²</strong></li>
+      <li>2× вызовов → <strong>~4× стоимость</strong></li>
+      <li>Визуальная «лестница» input на каждый вызов</li>
+      <li>Распределение стоимости сеанса с Prompt Caching</li>
+    </ul>
+    <div class="sim-stat" style="background:rgba(52,211,153,.08);border-color:rgba(52,211,153,.2);color:#34d399">Подвигайте N и δ — увидите параболу</div>
+  </a>
+
+  <a class="sim-card" href="./pages/simulator.html" style="--card-accent:#818cf8">
+    <div class="sim-num">02</div>
+    <h2>Длительный vs Объёмный контекст</h2>
+    <p class="sim-tagline-txt">
+      Много мелких итераций или мало крупных — при одинаковом финальном контексте стоимость разная.
+    </p>
+    <ul class="sim-insights">
+      <li>Много мелких итераций → квадратичная переплата</li>
+      <li>Крупный контекст, мало итераций → дешевле</li>
+      <li>Prompt Caching сжимает стоимость повторного input</li>
+      <li>Break-even: при каком N итерации выгоднее</li>
+    </ul>
+    <div class="sim-stat">Сравните два сценария с одинаковым результатом</div>
+  </a>
+
+  <a class="sim-card" href="./pages/one-shot.html" style="--card-accent:#f59e0b">
+    <div class="sim-num">03</div>
+    <h2>One-Shot: всё за один вызов</h2>
+    <p class="sim-tagline-txt">
+      Если проект влезает в контекст — зачем итерировать?
+      N = 1 → нет квадратичного роста.
+    </p>
+    <ul class="sim-insights">
+      <li>Средний файл с кодом ≈ <strong>1.5k tokens</strong></li>
+      <li>Микросервис (50–80 файлов) → <strong>полностью влезает</strong> в 200k</li>
+      <li>Калькулятор: влезает ли ваш проект?</li>
+      <li>Break-even: с какого N итерации дороже one-shot</li>
+    </ul>
+    <div class="sim-stat" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.2);color:#f59e0b">Проверьте: влезает ли ваш проект в один вызов?</div>
+  </a>
+
+  <a class="sim-card" href="./pages/context-tax.html" style="--card-accent:#a78bfa">
+    <div class="sim-num">04</div>
+    <h2>Фиксированный налог</h2>
+    <p class="sim-tagline-txt">
+      Системный промт летит в каждом вызове целиком. Чем больше итераций — тем больше раз вы за него платите.
+    </p>
+    <ul class="sim-insights">
+      <li>Какая доля стоимости — <strong>налог</strong>, какая — полезные данные</li>
+      <li>Два пути к одному контексту: мелкие vs крупные шаги</li>
+      <li>Техники: batch reads, bash chaining, unified diffs</li>
+      <li>Crossover: при каком N крупные шаги окупаются</li>
+    </ul>
+    <div class="sim-stat" style="background:rgba(167,139,250,.08);border-color:rgba(167,139,250,.2);color:#a78bfa">Разложите стоимость на налог и полезную работу</div>
+  </a>
+
+</div>
+
+<div class="thesis">
+  <div class="thesis-icon">⚡</div>
+  <div class="thesis-text">
+    <h3>N² против N</h3>
+    <p>
+      Размер промта, объём tool results и цена за токен влияют на стоимость линейно.
+      Число вызовов влияет квадратично: каждый новый вызов несёт в себе весь контекст
+      всех предыдущих. Сокращение промта даёт пропорциональную выгоду.
+      Сокращение числа вызовов даёт непропорционально бо́льшую,
+      потому что убирается не только сам вызов, но и его тень во всех последующих.
+    </p>
+  </div>
+</div>
+
+<script type="module" src="/src/web/home.js"></script>
+</body>
+</html>

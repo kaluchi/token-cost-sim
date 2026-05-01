@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>04 · Фиксированный налог — LLM Cost Sim</title>
+</head>
+<body>
+
+<h1>Фиксированный налог</h1>
+<p class="subtitle">
+  Системный промт летит в каждом вызове целиком. Чем больше итераций — тем больше раз вы за него платите.
+  Одна и та же цель, но разная стоимость из-за квадратичного эффекта и системного налога.
+</p>
+
+<!-- ─── Thesis ────────────────────────────────────────── -->
+<div class="thesis">
+  <div class="thesis-icon">🔍</div>
+  <div class="thesis-text">
+    <h3>Главный тезис</h3>
+    <p>
+      Системный промт (определения инструментов, инструкции, правила) — <strong>постоянный налог</strong>
+      на каждый API-вызов: отправляется целиком в каждом вызове.
+      Два пути к одному и тому же финальному контексту стоят по-разному:
+      <strong>мелкие шаги</strong> (много итераций, мелкий инкремент) оплачивают системный налог чаще →
+      квадратичный эффект усиливается. <strong>Крупные шаги</strong> (меньше итераций, крупный инкремент) —
+      дешевле, несмотря на то же финальное состояние.
+    </p>
+  </div>
+</div>
+
+<!-- ─── Settings & Frame ──────────────────────────────── -->
+<section>
+  <div class="card">
+    <div class="g2">
+      <div>
+        <h2>Модель и цены <span style="font-size:12px;color:var(--muted);font-weight:400">($/MTok)</span></h2>
+        <div class="model-btns">
+          <button class="mbtn active" data-model="sonnet" onclick="setModel('sonnet',this)">Sonnet 4.6 · $3/$15</button>
+          <button class="mbtn" data-model="opus"   onclick="setModel('opus',this)">Opus 4.7 · $5/$25</button>
+          <button class="mbtn" data-model="haiku"  onclick="setModel('haiku',this)">Haiku 4.5 · $1/$5</button>
+          <button class="mbtn" data-model="custom" onclick="setModel('custom',this)">Custom</button>
+        </div>
+        <div class="price-grid">
+          <div class="pf"><label>Input</label><input type="number" id="p_in" value="3" step="0.1" oninput="update()"></div>
+          <div class="pf"><label>Output</label><input type="number" id="p_out" value="15" step="0.5" oninput="update()"></div>
+          <div class="pf"><label>Cache Read</label><input type="number" id="p_cr" value="0.30" step="0.05" oninput="update()"></div>
+          <div class="pf"><label>Cache Write</label><input type="number" id="p_cw" value="3.75" step="0.1" oninput="update()"></div>
+        </div>
+      </div>
+      <div>
+        <h2>Контекстная рамка</h2>
+        <div class="sr">
+          <div class="sr-head">
+            <span class="sr-lbl">Системные токены <em style="color:var(--muted);font-style:normal">← неуправляемые</em></span>
+            <span class="sr-val ctx1-label" id="v_sys_tok">20 000</span>
+          </div>
+          <input type="range" id="sys_tok" min="1000" max="200000" step="1000" value="20000" oninput="sv('sys_tok');update()">
+        </div>
+        <div class="sr">
+          <div class="sr-head">
+            <span class="sr-lbl">Целевой финальный контекст</span>
+            <span class="sr-val" id="v_target_ctx" style="color:var(--green)">200 000</span>
+          </div>
+          <input type="range" id="target_ctx" min="50000" max="1000000" step="10000" value="200000" oninput="sv('target_ctx');update()">
+        </div>
+        <div id="ctxBar" class="ctx-bar"></div>
+        <div class="frame-stat" id="frameBudget">—</div>
+        <div class="toggle-row">
+          <label class="tog"><input type="checkbox" id="useCache" checked onchange="update()"><span class="tog-sl"></span></label>
+          <span style="font-size:13px">Prompt Caching включён</span>
+        </div>
+        <button class="reset-btn" onclick="resetToDefaults()">↺ Сбросить все параметры</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Two Paths ─────────────────────────────────────── -->
+<section>
+  <div class="g2">
+
+    <!-- Крупные шаги (слева — базовый) -->
+    <div class="card ctx2-card">
+      <h2 class="ctx2-label">Крупные шаги <span style="font-size:12px;color:var(--muted);font-weight:400">· база</span></h2>
+      <p class="ctx-subtitle">Подробный промт, крупные таргетированные tool results, меньше итераций. Инвестиция в подготовку.</p>
+
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Начальный промт (tokens)</span><span class="sr-val ctx2-label" id="v_prompt_b">5 000</span></div>
+        <input type="range" id="prompt_b" min="100" max="50000" step="100" value="5000" oninput="sv('prompt_b');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Данные / вызов (tokens) <em style="color:var(--muted);font-style:normal">tool results</em></span><span class="sr-val ctx2-label" id="v_data_b">8 000</span></div>
+        <input type="range" id="data_b" min="100" max="30000" step="100" value="8000" oninput="sv('data_b');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Model output / вызов <em style="color:var(--muted);font-style:normal">thinking + ответ</em></span><span class="sr-val ctx2-label" id="v_out_b">2 000</span></div>
+        <input type="range" id="out_b" min="200" max="8000" step="100" value="2000" oninput="sv('out_b');update()"></div>
+      <div class="bar-label">Состав финального контекста:</div>
+      <div id="barB" class="path-bar"></div>
+      <div class="bar-legend">
+        <span style="color:#818cf8">S</span> системные ·
+        <span style="color:#fbbf24">P</span> промт ·
+        <span style="color:#34d399">D</span> данные (N×tool) ·
+        <span style="color:#f87171">O</span> output (N×model)
+      </div>
+      <hr class="divider">
+      <div class="g4">
+        <div class="stat"><div class="stat-lbl">N итераций</div><div class="stat-val ctx2-label" id="s_nB">—</div><div class="stat-sub">выведено</div></div>
+        <div class="stat"><div class="stat-lbl">Факт. контекст</div><div class="stat-val ctx2-label" id="s_fcB">—</div><div class="stat-sub">tokens</div></div>
+        <div class="stat"><div class="stat-lbl">Стоимость</div><div class="stat-val ctx2-label" id="s_costB">—</div><div class="stat-sub">USD</div></div>
+        <div class="stat"><div class="stat-lbl">Sys налог</div><div class="stat-val ctx2-label" id="s_taxB">—</div><div class="stat-sub">USD</div></div>
+      </div>
+      <div style="margin-top:8px;text-align:center;font-size:11px;color:var(--muted)">
+        Σ input обработано: <span id="s_sumB" class="ctx2-label" style="font-weight:700;font-family:monospace">—</span>
+        · output: <span id="s_outB" class="ctx2-label" style="font-weight:600;font-family:monospace">—</span>
+      </div>
+    </div>
+
+    <!-- Мелкие шаги (справа — сравнение) -->
+    <div class="card ctx1-card">
+      <h2 class="ctx1-label">Мелкие шаги</h2>
+      <p class="ctx-subtitle">Минимальный промт, мелкие tool results, частые итерации. Зондирование, ошибки, уточнения.</p>
+
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Начальный промт (tokens)</span><span class="sr-val ctx1-label" id="v_prompt_a">500</span></div>
+        <input type="range" id="prompt_a" min="100" max="50000" step="100" value="500" oninput="sv('prompt_a');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Данные / вызов (tokens) <em style="color:var(--muted);font-style:normal">tool results</em></span><span class="sr-val ctx1-label" id="v_data_a">2 000</span></div>
+        <input type="range" id="data_a" min="100" max="30000" step="100" value="2000" oninput="sv('data_a');update()"></div>
+      <div class="sr"><div class="sr-head"><span class="sr-lbl">Model output / вызов <em style="color:var(--muted);font-style:normal">thinking + ответ</em></span><span class="sr-val ctx1-label" id="v_out_a">1 500</span></div>
+        <input type="range" id="out_a" min="200" max="8000" step="100" value="1500" oninput="sv('out_a');update()"></div>
+      <div class="bar-label">Состав финального контекста:</div>
+      <div id="barA" class="path-bar"></div>
+      <div class="bar-legend">
+        <span style="color:#818cf8">S</span> системные ·
+        <span style="color:#fbbf24">P</span> промт ·
+        <span style="color:#34d399">D</span> данные (N×tool) ·
+        <span style="color:#f87171">O</span> output (N×model)
+      </div>
+      <hr class="divider">
+      <div class="g4">
+        <div class="stat"><div class="stat-lbl">N итераций</div><div class="stat-val ctx1-label" id="s_nA">—</div><div class="stat-sub">выведено</div></div>
+        <div class="stat"><div class="stat-lbl">Факт. контекст</div><div class="stat-val ctx1-label" id="s_fcA">—</div><div class="stat-sub">tokens</div></div>
+        <div class="stat"><div class="stat-lbl">Стоимость</div><div class="stat-val ctx1-label" id="s_costA">—</div><div class="stat-sub">USD</div></div>
+        <div class="stat"><div class="stat-lbl">Sys налог</div><div class="stat-val ctx1-label" id="s_taxA">—</div><div class="stat-sub">USD</div></div>
+      </div>
+      <div style="margin-top:8px;text-align:center;font-size:11px;color:var(--muted)">
+        Σ input обработано: <span id="s_sumA" class="ctx1-label" style="font-weight:700;font-family:monospace">—</span>
+        · output: <span id="s_outA" class="ctx1-label" style="font-weight:600;font-family:monospace">—</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─── Comparison banner ─────────────────────────────── -->
+<section>
+  <div class="card">
+    <div class="comp-banner">
+      <div class="big-cost">
+        <div class="big-cost-lbl">Крупные шаги · база</div>
+        <div class="big-cost-val ctx2-label" id="bc_b">$—</div>
+        <div class="big-cost-detail" id="bc_b_d">—</div>
+        <div id="badge_b" class="badge"></div>
+      </div>
+      <div class="vs-block">
+        <div class="vs-label">Переплата мелких шагов</div>
+        <div class="vs-diff" id="vs_save">—</div>
+        <div class="vs-pct" id="vs_pct">—</div>
+      </div>
+      <div style="font-size:28px;color:var(--muted)">VS</div>
+      <div class="vs-block">
+        <div class="vs-label">Итерации</div>
+        <div class="vs-diff" id="vs_iters">—</div>
+        <div class="vs-pct" id="vs_iters_d">—</div>
+      </div>
+      <div class="big-cost">
+        <div class="big-cost-lbl">Мелкие шаги</div>
+        <div class="big-cost-val ctx1-label" id="bc_a">$—</div>
+        <div class="big-cost-detail" id="bc_a_d">—</div>
+        <div id="badge_a" class="badge"></div>
+      </div>
+    </div>
+    <div id="infoBox" class="info-box info-neutral">—</div>
+  </div>
+</section>
+
+<!-- ─── Crossover metrics ─────────────────────────────── -->
+<div class="metrics-strip" style="grid-template-columns:repeat(4,1fr)">
+  <div class="mcard"><div class="mcard-lbl">Лин. crossover · крупные</div><div class="mcard-val ctx2-label" id="m_lcB">—</div><div class="mcard-sub">данные > система в контексте</div></div>
+  <div class="mcard"><div class="mcard-lbl">Σ Crossover · крупные</div><div class="mcard-val ctx2-label" id="m_ccB">—</div><div class="mcard-sub">Σ данные > Σ система</div></div>
+  <div class="mcard"><div class="mcard-lbl">Лин. crossover · мелкие</div><div class="mcard-val ctx1-label" id="m_lcA">—</div><div class="mcard-sub">данные > система в контексте</div></div>
+  <div class="mcard"><div class="mcard-lbl">Σ Crossover · мелкие</div><div class="mcard-val ctx1-label" id="m_ccA">—</div><div class="mcard-sub">Σ данные > Σ система</div></div>
+</div>
+
+<!-- ─── Charts row 1 ──────────────────────────────────── -->
+<section><div class="g2">
+  <div class="card">
+    <div class="chart-title">Рост контекста по вызовам</div>
+    <div class="chart-sub">Оба пути растут к одному целевому контексту. Горизонталь — системные токены S.</div>
+    <div class="chart-wrap"><canvas id="chCtx"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="chart-title">Суммарные обработанные input-токены</div>
+    <div class="chart-sub">Квадратичные параболы — чем больше итераций, тем непропорционально больше токенов обработано.</div>
+    <div class="chart-wrap"><canvas id="chCumTok"></canvas></div>
+  </div>
+</div></section>
+
+<!-- ─── Charts row 2 ──────────────────────────────────── -->
+<section><div class="g2">
+  <div class="card">
+    <div class="chart-title">Суммарные затраты ($)</div>
+    <div class="chart-sub">Кумулятивная стоимость каждого пути. Финальные значения — итоговая стоимость достижения одного и того же контекста.</div>
+    <div class="chart-wrap"><canvas id="chCumCost"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="chart-title">Стоимость каждого вызова</div>
+    <div class="chart-sub">Крупные шаги: дороже за вызов, но вызовов меньше. Мелкие: дешевле за вызов, но вызовов больше → квадратичный эффект.</div>
+    <div class="chart-wrap"><canvas id="chTurn"></canvas></div>
+  </div>
+</div></section>
+
+<!-- ─── Charts row 3 ──────────────────────────────────── -->
+<section><div class="g2">
+  <div class="card">
+    <div class="chart-title">Доля системного налога в input (%)</div>
+    <div class="chart-sub">С каждым вызовом данные растут, а системный промт — нет. Пунктир = кумулятивная доля.</div>
+    <div class="chart-wrap"><canvas id="chShare"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="chart-title">Чувствительность: целевой контекст</div>
+    <div class="chart-sub">Стоимость обоих путей при варьировании целевого контекста. Разрыв растёт с увеличением цели.</div>
+    <div class="chart-wrap"><canvas id="chSens"></canvas></div>
+  </div>
+</div></section>
+
+<!-- ─── Interpretation ────────────────────────────────── -->
+<section>
+  <div class="card interp">
+    <h2>Интерпретация</h2>
+
+    <div class="i-h3">Два crossover-а</div>
+    <p>
+      <strong>Линейный crossover</strong> — вызов, на котором пользовательские данные <em>в текущем контексте</em>
+      впервые превышают системные токены. Формула: <code>k > (S &minus; P &minus; d) / &delta;</code> где &delta; = data + output.
+    </p>
+    <p>
+      <strong>Кумулятивный crossover</strong> — вызов, на котором <em>суммарный объём</em> обработанных пользовательских
+      токенов (по всем вызовам) превышает суммарный объём системных. Происходит позже линейного.
+    </p>
+    <div class="fbox">Линейный:       P + k·δ + d > S      →  N = k+1
+Кумулятивный:   Σ user > S·N          →  N ≈ 2·(S−P)/δ + 1</div>
+
+    <div class="i-h3">Почему крупные шаги дешевле</div>
+    <div class="fbox">Путь с N₁ вызовами:   Σ input ≈ (S+P)·N₁ + δ₁·N₁²/2
+Путь с N₂ вызовами:   Σ input ≈ (S+P)·N₂ + δ₂·N₂²/2
+
+При одинаковом финальном контексте: N₁·δ₁ ≈ N₂·δ₂
+  → N₂ &lt; N₁ (крупнее шаг = меньше итераций)
+  → квадратичный член N₂² ≪ N₁²
+  → системный налог S·N₂ &lt; S·N₁</div>
+    <p>
+      Крупные шаги выигрывают дважды: меньше квадратичного роста данных <strong>и</strong> меньше системного налога.
+    </p>
+
+    <div class="i-h3">Практические рекомендации</div>
+    <ul>
+      <li><span class="hl">Инвестируй в промт</span> — подробное описание задачи на старте сокращает число уточняющих итераций</li>
+      <li>Инструменты, возвращающие <span class="hl">крупные релевантные блоки</span> за один вызов, дешевле многих мелких запросов</li>
+      <li>Системный промт — <span class="hl">фиксированный налог</span>: его нельзя уменьшить, но можно платить его реже (меньше итераций)</li>
+      <li><span class="hlg">Prompt Caching</span> снижает и системный налог (~10%), и стоимость повторной передачи данных</li>
+      <li>При длинных сессиях (N &gt; crossover) данные доминируют — фокусируйся на <span class="hl">компактности tool results</span></li>
+    </ul>
+
+    <div class="i-h3">Техники «крупных шагов» — как уменьшить N</div>
+    <p>Каждая из этих техник увеличивает объём полезной работы за одну итерацию, сокращая общее число API-вызовов:</p>
+
+    <p><strong>Подготовка контекста (↑ начальный промт)</strong></p>
+    <ul>
+      <li><span class="hl">CLAUDE.md / project docs</span> — архитектура, конвенции, ключевые пути файлов. Агент не тратит итерации на разведку структуры проекта</li>
+      <li><span class="hl">Детальное ТЗ с acceptance criteria</span> — чем точнее описана задача, тем меньше уточняющих циклов «попробовал → не то → переделал»</li>
+      <li><span class="hl">Контекст в промте, а не в поиске</span> — вставить релевантные сниппеты кода прямо в запрос вместо того, чтобы агент искал их сам через grep/glob</li>
+    </ul>
+
+    <p><strong>Укрупнение tool results (↑ данных за вызов)</strong></p>
+    <ul>
+      <li><span class="hl">Множественные чтения</span> — читать несколько связанных файлов в одном вызове (или параллельные tool calls), а не по одному</li>
+      <li><span class="hl">Grep с широким контекстом</span> — <code>-C 10</code> или <code>-A 20</code> вместо точечных попаданий, чтобы избежать повторных чтений «а что вокруг?»</li>
+      <li><span class="hl">git diff + git log</span> — полная картина изменений за один вызов вместо нескольких git status / git show</li>
+      <li><span class="hl">Glob-паттерны</span> — <code>src/**/*.ts</code> для обзора структуры вместо пошагового обхода директорий</li>
+    </ul>
+
+    <p><strong>Укрупнение записи (↑ output за вызов)</strong></p>
+    <ul>
+      <li><span class="hl">Unified diff / мульти-файл эдиты</span> — применить изменения в нескольких файлах одной операцией вместо правок по одному файлу за итерацию</li>
+      <li><span class="hl">Write целого файла</span> — переписать файл целиком, если изменений много, вместо цепочки мелких Edit-ов</li>
+      <li><span class="hl">Микропрограммы / скрипты</span> — написать bash/python-скрипт, выполняющий всю трансформацию за один запуск, вместо ручных пошаговых операций</li>
+      <li><span class="hl">Чейнинг в Bash</span> — <code>cmd1 &amp;&amp; cmd2 &amp;&amp; cmd3</code> объединяет несколько операций в один tool call (создание, сборка, тест — за один вызов)</li>
+    </ul>
+
+    <p><strong>Компонуемость инструментов (↓ итераций за счёт пайплайнов)</strong></p>
+    <ul>
+      <li><span class="hl">Bash вместо некомпонуемых MCP-тулов</span> — MCP-инструменты атомарны: один вызов = одна операция = один вызов.
+        Bash-аналоги компонуются через пайпы и редиректы: <code>grep -r "TODO" src/ | wc -l</code> — поиск + подсчёт за один tool call вместо двух</li>
+      <li><span class="hl">head / tail обрезка</span> — <code>cat file.log | tail -100</code> или <code>head -50</code> возвращает только нужный фрагмент, а не весь файл; меньше токенов в контексте = дешевле каждый последующий вызов</li>
+      <li><span class="hl">Пайплайн-цепочки</span> — <code>find . -name "*.ts" | xargs grep "deprecated" | sort -u | head -20</code> — поиск, фильтрация, дедупликация и обрезка за одну итерацию. Через MCP это 3–4 отдельных tool call</li>
+      <li><span class="hl">jq / sed / awk на месте</span> — трансформация данных прямо в shell вместо «прочитал → обработал в output → записал»: <code>jq '.items[] | select(.status=="active")' data.json</code> фильтрует на стороне shell, а не в модели</li>
+      <li><span class="hl">Правило:</span> если MCP-тул делает то же, что одна unix-команда — используй bash-версию, потому что её можно встроить в пайплайн с <code>grep</code>, <code>head</code>, <code>wc</code>, <code>sort</code> и другими бесплатными фильтрами, сокращая и число итераций, и объём данных в контексте</li>
+    </ul>
+
+    <p><strong>Архитектурные решения</strong></p>
+    <ul>
+      <li><span class="hl">Субагенты</span> — делегировать разведку и поиск параллельным агентам, не загрязняя основной контекст</li>
+      <li><span class="hl">Worktree-изоляция</span> — изолированные ветки для экспериментов, чтобы ошибки не порождали итерации отката</li>
+      <li><span class="hl">Compact-стратегия</span> — при приближении к лимиту контекста сжимать историю, а не начинать новую сессию</li>
+      <li><span class="hl">Plan → Execute</span> — сначала составить план (дёшево), потом выполнить за минимум итераций, вместо «проб и ошибок»</li>
+    </ul>
+
+    <div class="i-h3">Динамический вывод по текущим настройкам</div>
+    <div id="dynConclusion">Настрой параметры выше...</div>
+  </div>
+</section>
+
+<script type="module" src="/src/web/context-tax.js"></script>
+</body>
+</html>

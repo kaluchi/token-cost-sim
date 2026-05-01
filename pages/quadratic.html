@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>01 · Где прячется x²-парабола — LLM Cost Sim</title>
+</head>
+<body>
+
+<h1>Где прячется x²-парабола</h1>
+<p class="subtitle">
+  LLM API stateless — каждый вызов принимает <strong>весь</strong> контекст целиком.
+  Контекст растёт линейно, но суммарный input за сеанс растёт квадратично.
+</p>
+
+<!-- ─── Thesis ────────────────────────────────────────── -->
+<div class="thesis">
+  <div class="thesis-icon">📐</div>
+  <div class="thesis-text">
+    <h3>Ключевой механизм</h3>
+    <p>
+      LLM API тарифицирует <strong>каждый</strong> вызов по размеру входного контекста.
+      Контекст растёт на δ токенов за вызов → вызов k обрабатывает S + k·δ.
+      Суммарный input за N вызовов = <strong>S·N + δ·N(N−1)/2 ≈ δ·N²/2</strong> —
+      это сумма арифметической прогрессии, площадь трапеции, интеграл линейной функции.
+      Одна и та же парабола, три разных языка.
+    </p>
+  </div>
+</div>
+
+<!-- ─── Controls ──────────────────────────────────────── -->
+<section>
+  <div class="card">
+    <h2>Параметры симуляции</h2>
+    <div class="g3">
+      <div class="sr">
+        <div class="sr-head">
+          <span class="sr-lbl">Начальный контекст S (tokens)</span>
+          <span class="sr-val ctx1-label" id="v_S">20 000</span>
+        </div>
+        <input type="range" id="S" min="0" max="50000" step="1000" value="20000" oninput="sv('S');update()">
+      </div>
+      <div class="sr">
+        <div class="sr-head">
+          <span class="sr-lbl">Прирост за вызов δ (tokens)</span>
+          <span class="sr-val ctx2-label" id="v_delta">3 500</span>
+        </div>
+        <input type="range" id="delta" min="500" max="20000" step="500" value="3500" oninput="sv('delta');update()">
+      </div>
+      <div class="sr">
+        <div class="sr-head">
+          <span class="sr-lbl">Количество вызовов N</span>
+          <span class="sr-val" id="v_N" style="color:var(--green)">50</span>
+        </div>
+        <input type="range" id="N" min="1" max="100" step="1" value="50" oninput="sv('N');update()">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Staircase visualization ───────────────────────── -->
+<section>
+  <div class="card">
+    <div class="chart-title">Лестница: input каждого API-вызова</div>
+    <div class="chart-sub">
+      Каждый столбик — один API-вызов. Синяя часть = фиксированный начальный контекст S (отправляется в каждом вызове).
+      Оранжевая часть = накопленные данные (растёт на δ за вызов). <strong>Площадь всех столбиков = суммарный input.</strong>
+    </div>
+    <div class="chart-wrap" style="height:300px"><canvas id="chStairs"></canvas></div>
+  </div>
+</section>
+
+<!-- ─── Cost visualization ───────────────────────────────── -->
+<section>
+  <div class="card">
+    <div class="chart-title">Перераспределённая стоимость сеанса</div>
+    <div class="chart-sub">
+      Те же столбики, но высота умножена на ценовой коэффициент.
+      Предыдущие вызовы — cache read (×<span id="ratioLabel">0.10</span>), последний — полная ставка (×1).
+      Пустая рамка — разница с полной ставкой без кэширования.
+    </div>
+    <div class="toggle-row" style="margin-bottom:12px">
+      <label class="tog"><input type="checkbox" id="costCache" checked onchange="update()"><span class="tog-sl"></span></label>
+      <span style="font-size:13px">Prompt Caching</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px">Sonnet 4.6 · input $3 · cache read $0.30 / MTok</span>
+    </div>
+    <div class="chart-wrap" style="height:300px"><canvas id="chCostStairs"></canvas></div>
+    <div id="costBar" class="ctx-bar" style="margin-top:16px;height:58px"></div>
+    <div style="margin-top:6px;font-size:12px;color:var(--muted)" id="costSummary">—</div>
+  </div>
+</section>
+
+<!-- ─── Key metrics ───────────────────────────────────── -->
+<div class="metrics-strip">
+  <div class="mcard"><div class="mcard-lbl">Финальный контекст</div><div class="mcard-val ctx1-label" id="m_ctx">—</div><div class="mcard-sub">S + (N−1)·δ</div></div>
+  <div class="mcard"><div class="mcard-lbl">Σ Input (всего)</div><div class="mcard-val" id="m_total" style="color:var(--green)">—</div><div class="mcard-sub">суммарно обработано</div></div>
+  <div class="mcard"><div class="mcard-lbl">Из них cached</div><div class="mcard-val ctx2-label" id="m_cached_pct">—</div><div class="mcard-sub">доля повторной обработки</div></div>
+  <div class="mcard"><div class="mcard-lbl">Стоимость сеанса</div><div class="mcard-val" id="m_cost" style="color:var(--green)">—</div><div class="mcard-sub">Sonnet · с кэшем</div></div>
+</div>
+
+<!-- ─── Charts row 1 ──────────────────────────────────── -->
+<section><div class="g2">
+  <div class="card">
+    <div class="chart-title">Контекст каждого вызова (линейный рост)</div>
+    <div class="chart-sub">Input(N) = S + N·δ — каждый следующий вызов обрабатывает на δ токенов больше.</div>
+    <div class="chart-wrap"><canvas id="chLinear"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="chart-title">Суммарный input (парабола)</div>
+    <div class="chart-sub">Σ Input(k) = S·N + δ·N²/2 — квадратичная парабола. Это <strong>площадь под линейным графиком</strong> слева.</div>
+    <div class="chart-wrap"><canvas id="chParabola"></canvas></div>
+  </div>
+</div></section>
+
+<!-- ─── Doubling demo ─────────────────────────────────── -->
+<section>
+  <div class="card">
+    <div class="chart-title">Удвоение: N → 2N → 4× стоимость</div>
+    <div class="chart-sub">
+      При удвоении числа вызовов квадратичный член вырастает в 4×, а линейный (S·N) — только в 2×.
+      Чем больше вызовов, тем сильнее доминирует квадратичный эффект.
+    </div>
+    <div class="g3" id="doublingCards">
+      <div class="mcard"><div class="mcard-lbl">N</div><div class="mcard-val ctx1-label" id="d_n1">—</div><div class="mcard-sub" id="d_c1">—</div></div>
+      <div class="mcard"><div class="mcard-lbl">2N</div><div class="mcard-val ctx2-label" id="d_n2">—</div><div class="mcard-sub" id="d_c2">—</div></div>
+      <div class="mcard"><div class="mcard-lbl">Разница</div><div class="mcard-val" id="d_ratio" style="color:var(--red)">—</div><div class="mcard-sub">во сколько раз дороже</div></div>
+    </div>
+    <div class="chart-wrap" style="height:220px;margin-top:16px"><canvas id="chDouble"></canvas></div>
+  </div>
+</section>
+
+<!-- ─── Math explanation ──────────────────────────────── -->
+<section>
+  <div class="card interp">
+    <h2>Три языка одной параболы</h2>
+
+    <div class="i-h3">1. Арифметическая прогрессия</div>
+    <p>Input каждого вызова: S, S+δ, S+2δ, ..., S+(N−1)δ — арифметическая прогрессия с разностью δ.</p>
+    <div class="fbox">Σ = N·S + δ·(0 + 1 + 2 + ... + (N−1))
+   = N·S + δ · N·(N−1)/2
+   ≈ S·N + δ·N²/2   при больших N</div>
+
+    <div class="i-h3">2. Площадь трапеции</div>
+    <p>
+      Представь ось X = номер вызова, ось Y = размер input. Получается трапеция с основаниями S (первый вызов)
+      и S + N·δ (последний) и высотой N. Площадь = суммарный input:
+    </p>
+    <div class="fbox">Площадь = (S + (S + N·δ)) / 2 × N = S·N + δ·N²/2</div>
+    <p>
+      Прямоугольник высотой S — это <span class="hl">фиксированный налог</span> (повторная передача начального контекста).
+      Треугольник сверху — это <span class="hl2">квадратичная переплата</span> за растущие данные.
+    </p>
+
+    <div class="i-h3">3. Интеграл</div>
+    <p>В непрерывном приближении input(x) = S + δ·x, x ∈ [0, N]:</p>
+    <div class="fbox">∫₀ᴺ (S + δ·x) dx = S·x + δ·x²/2 |₀ᴺ = S·N + δ·N²/2</div>
+    <p>Та же формула. Интеграл = площадь под графиком = суммарный input = стоимость.</p>
+
+    <div class="i-h3">Почему это важно</div>
+    <ul>
+      <li><strong>2× вызовов → ~4× стоимость</strong> (квадратичный член доминирует)</li>
+      <li><strong>Prompt Caching</strong> снижает стоимость повторной передачи старого контекста до ~10%, сжимая квадратичный коэффициент в ~10×</li>
+      <li><strong>Меньше вызовов</strong> (крупные шаги, качественный промт) — квадратичный эффект делает это эффективнее оптимизации размера контекста</li>
+      <li>При фиксированном финальном контексте: меньше вызовов → дешевле</li>
+    </ul>
+  </div>
+</section>
+
+<script type="module" src="/src/web/quadratic.js"></script>
+</body>
+</html>
