@@ -1,4 +1,6 @@
+@view-transition{navigation:auto}
 *{box-sizing:border-box;margin:0;padding:0}
+html{background:#0b0e1a}
 
 /* ─── Site nav ────────────────────────────────────────────────── */
 .site-nav{
@@ -14,6 +16,7 @@
   color:#64748b;text-decoration:none;transition:.15s;letter-spacing:.02em}
 .nav-link:hover{color:#e2e8f0;background:rgba(255,255,255,.06)}
 .nav-link.active{color:#818cf8;background:rgba(129,140,248,.12)}
+.nav-short{display:none}
 
 /* ─── Home page ───────────────────────────────────────────────── */
 .home-hero{text-align:center;padding:52px 0 36px}
@@ -21,7 +24,7 @@
 .home-hero h1{font-size:38px;font-weight:900;margin-bottom:12px;letter-spacing:-.02em}
 .home-tagline{font-size:15px;color:#94a3b8;max-width:520px;margin:0 auto;line-height:1.65}
 
-.home-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-bottom:28px}
+.home-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px;margin-bottom:28px}
 
 .sim-card{
   display:block;text-decoration:none;color:inherit;
@@ -208,3 +211,29 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
 .bar-legend{font-size:10px;color:var(--muted);margin-top:2px;line-height:1.6}
 .bar-legend span{font-weight:700}
 .frame-stat{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:700;margin:8px 0;color:var(--green)}
+
+/* ─── Responsive ─────────────────────────────────────────── */
+@media(max-width:860px){
+  body{padding:60px 14px 20px}
+  .site-nav{padding:0 12px;gap:6px}
+  .nav-links{gap:2px;flex-shrink:0}
+  .nav-link{padding:6px 10px;font-size:12px}
+  .nav-full{display:none}
+  .nav-short{display:inline}
+  h1{font-size:20px}
+  .subtitle{font-size:13px}
+  .home-hero h1{font-size:24px}
+  .home-tagline{font-size:13px}
+  .home-grid{grid-template-columns:1fr !important}
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .price-grid{grid-template-columns:1fr 1fr}
+  .comp-banner{flex-direction:column;gap:18px;padding:16px 0}
+  .big-cost-val{font-size:28px}
+  .vs-diff{font-size:20px}
+  .thesis{flex-direction:column;gap:10px}
+  .thesis-icon{font-size:24px}
+  .sim-num{font-size:48px}
+  .metrics-strip{grid-template-columns:1fr 1fr}
+  .chart-wrap{height:220px}
+  .interp .fbox{font-size:11px;overflow-x:auto}
+}

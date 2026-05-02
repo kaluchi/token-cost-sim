@@ -1,108 +1,30 @@
-import Chart from 'chart.js/auto';
-import { MODELS } from '../core/models.js';
 import { simulate } from '../core/simulate.js';
 import { fmtN, fmtMT, fmtCost } from '../core/format.js';
 import { injectNav } from './nav.js';
+import {
+  sv, setModel as _setModel, pricing, createStorage,
+  mkChart, autoFmt, LEGEND, GRID, TICK,
+} from './shared.js';
 import './style.css';
 
 injectNav('oneshot');
 
 const CONTEXT_WINDOW = 200_000;
-const STORAGE_KEY = 'oneshot_settings';
 const DEFAULTS = {
   files: 80, avg_tok: 1200, relevance: 50, sys: 15000,
   files_per_iter: 3, out_per: 800,
   p_in: 3, p_out: 15, p_cr: 0.30, p_cw: 3.75,
   useCache: true,
 };
+const SLIDERS = ['files', 'avg_tok', 'relevance', 'sys', 'files_per_iter', 'out_per'];
+const store = createStorage('oneshot_settings', DEFAULTS);
 
-function saveToStorage() {
-  const state = {};
-  Object.keys(DEFAULTS).forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    state[id] = el.type === 'checkbox' ? el.checked : el.value;
-  });
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
-}
-
-function loadFromStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const state = JSON.parse(raw);
-    Object.entries(state).forEach(([id, val]) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (el.type === 'checkbox') el.checked = !!val;
-      else el.value = val;
-    });
-    return true;
-  } catch { return false; }
-}
-
-export function resetToDefaults() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
-  Object.entries(DEFAULTS).forEach(([id, val]) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (el.type === 'checkbox') el.checked = val;
-    else el.value = val;
-  });
-  document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.mbtn[data-model="sonnet"]')?.classList.add('active');
-  ['files', 'avg_tok', 'relevance', 'sys', 'files_per_iter', 'out_per'].forEach(sv);
-  update();
-}
-window.resetToDefaults = resetToDefaults;
-
-export function sv(id) {
-  const el = document.getElementById(id);
-  document.getElementById('v_' + id).textContent = Number(el.value).toLocaleString('ru-RU');
-}
 window.sv = sv;
+window.setModel = (key, btn) => _setModel(key, btn, update);
+window.resetToDefaults = () => store.reset(SLIDERS, update);
 
-export function setModel(key, btn) {
-  document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  const m = MODELS[key];
-  document.getElementById('p_in').value  = m.input;
-  document.getElementById('p_out').value = m.output;
-  document.getElementById('p_cr').value  = m.cacheRead;
-  document.getElementById('p_cw').value  = m.cacheWrite;
-  update();
-}
-window.setModel = setModel;
-
-function pricing() {
-  return {
-    input:      +document.getElementById('p_in').value,
-    output:     +document.getElementById('p_out').value,
-    cacheRead:  +document.getElementById('p_cr').value,
-    cacheWrite: +document.getElementById('p_cw').value,
-  };
-}
-
-const CHARTS = {};
-const GRID   = { color: 'rgba(255,255,255,0.04)' };
-const TICK   = { color: '#64748b', font: { size: 11 } };
-const LEGEND = { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } };
-
-function mkChart(id, cfg) {
-  if (CHARTS[id]) CHARTS[id].destroy();
-  CHARTS[id] = new Chart(document.getElementById(id), cfg);
-}
-
-function autoFmt(maxVal) {
-  if (maxVal >= 10)   return v => '$' + v.toFixed(1);
-  if (maxVal >= 1)    return v => '$' + v.toFixed(2);
-  if (maxVal >= 0.1)  return v => '$' + v.toFixed(3);
-  if (maxVal >= 0.01) return v => '$' + v.toFixed(4);
-  return v => '$' + v.toExponential(2);
-}
-
-export function update() {
-  saveToStorage();
+function update() {
+  store.save();
   const pr       = pricing();
   const useCache = document.getElementById('useCache').checked;
   const files    = +document.getElementById('files').value;
@@ -130,7 +52,6 @@ export function update() {
 
   const $ = id => document.getElementById(id);
 
-  // Fit check
   $('bc_proj').textContent   = fmtN(oneshotCtx);
   $('bc_proj_d').textContent = `${fmtN(relevantFiles)} файлов × ${fmtN(avgTok)} = ${fmtN(relevantTok)} + sys ${fmtN(sys)}`;
   $('badge_fit').textContent = fits ? '✓ Влезает в 200k' : '⚠ Не влезает';
@@ -143,7 +64,6 @@ export function update() {
   $('bc_oneshot').textContent   = fmtCost(oneshotCost);
   $('bc_oneshot_d').textContent = `${fmtN(oneshotInput)} input + ${fmtN(oneshotOutput)} output`;
 
-  // Context bar
   if (fits) {
     const pctSys  = (sys / CONTEXT_WINDOW * 100).toFixed(1);
     const pctData = (relevantTok / CONTEXT_WINDOW * 100).toFixed(1);
@@ -159,7 +79,6 @@ export function update() {
       `<div class="ctx-seg" style="flex:${-freeTokens};background:rgba(248,113,113,.25);color:#f87171">+${pctOver}% сверх</div>`;
   }
 
-  // Info box
   const ib = $('infoBox');
   const overpay = iterSim.totalCost - oneshotCost;
   const overpayPct = oneshotCost > 0 ? (overpay / oneshotCost * 100).toFixed(0) : '0';
@@ -175,14 +94,12 @@ export function update() {
     ib.innerHTML = `⚠ <strong>Проект не влезает</strong> в 200k контекст. Нужна фильтрация: снизь % релевантных файлов или используй итеративный подход с таргетированным поиском.`;
   }
 
-  // Metrics
   $('m_os_cost').textContent = fmtCost(oneshotCost);
   $('m_it_cost').textContent = fmtCost(iterSim.totalCost);
   $('m_it_n').textContent    = `${nIter} итер.`;
   $('m_overpay').textContent = overpay > 0 ? `+${overpayPct}%` : '—';
   $('m_it_tok').textContent  = fmtMT(iterSim.totalInput);
 
-  // Break-even: max N where iterative is still cheaper than one-shot
   let brkN = null;
   const firstIterCost = simulate(
     { initialContext: sys, numTurns: 1, userMsg: 500, toolResult: tokPerIter, modelOutput: outPer },
@@ -201,7 +118,6 @@ export function update() {
   }
   $('m_brk').textContent = brkN === 0 ? 'one-shot сразу' : brkN !== null ? `${brkN}` : '> 200';
 
-  // Chart 1: Cost comparison
   const maxPlotN = Math.min(Math.max(nIter * 3, 30), 100);
   const plotNs   = Array.from({ length: maxPlotN }, (_, i) => i + 1);
   const iterCosts = plotNs.map(n =>
@@ -239,7 +155,6 @@ export function update() {
     },
   });
 
-  // Chart 2: Token comparison
   const iterTokens = plotNs.map(n =>
     simulate({ initialContext: sys, numTurns: n, userMsg: 500, toolResult: tokPerIter, modelOutput: outPer }, pr, false).totalInput
   );
@@ -276,7 +191,7 @@ export function update() {
 window.update = update;
 
 window.addEventListener('load', () => {
-  loadFromStorage();
-  ['files', 'avg_tok', 'relevance', 'sys', 'files_per_iter', 'out_per'].forEach(sv);
+  store.load();
+  SLIDERS.forEach(sv);
   update();
 });

@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>04 · Фиксированный налог — LLM Cost Sim</title>
+  <style>@view-transition{navigation:auto}html{background:#0b0e1a}</style>
+  <script type="module" src="/src/web/context-tax.js" blocking="render"></script>
 </head>
 <body>
 
@@ -180,7 +182,7 @@
 </section>
 
 <!-- ─── Crossover metrics ─────────────────────────────── -->
-<div class="metrics-strip" style="grid-template-columns:repeat(4,1fr)">
+<div class="metrics-strip">
   <div class="mcard"><div class="mcard-lbl">Лин. crossover · крупные</div><div class="mcard-val ctx2-label" id="m_lcB">—</div><div class="mcard-sub">данные > система в контексте</div></div>
   <div class="mcard"><div class="mcard-lbl">Σ Crossover · крупные</div><div class="mcard-val ctx2-label" id="m_ccB">—</div><div class="mcard-sub">Σ данные > Σ система</div></div>
   <div class="mcard"><div class="mcard-lbl">Лин. crossover · мелкие</div><div class="mcard-val ctx1-label" id="m_lcA">—</div><div class="mcard-sub">данные > система в контексте</div></div>
@@ -316,6 +318,6 @@
   </div>
 </section>
 
-<script type="module" src="/src/web/context-tax.js"></script>
+
 </body>
 </html>

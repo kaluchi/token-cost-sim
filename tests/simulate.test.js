@@ -48,11 +48,11 @@ describe('simulate()', () => {
     expect(cached.totalCost).toBeLessThan(uncached.totalCost);
   });
 
-  it('first turn cost is identical with and without cache', () => {
+  it('first turn with cache costs more than without (cache write premium)', () => {
     const p = { initialContext: 5000, numTurns: 1, userMsg: 200, toolResult: 1000, modelOutput: 500 };
     const cached   = simulate(p, PR, true);
     const uncached = simulate(p, PR, false);
-    expect(cached.totalCost).toBeCloseTo(uncached.totalCost, 10);
+    expect(cached.totalCost).toBeGreaterThan(uncached.totalCost);
   });
 
   it('larger initial context increases total cost', () => {

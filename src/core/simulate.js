@@ -57,11 +57,11 @@ export function simulate(params, pricing, useCache) {
     totalInput  += fullIn;
     totalOutput += modelOutput;
 
-    // Turn 0 always pays full input price (nothing cached yet).
-    // Turns 1+ with cache: previous ctx is cached (cheap read), new tokens at regular price.
-    const inputCost = useCache && i > 0
-      ? (ctx * pricing.cacheRead + newIn * pricing.input) / 1e6
-      : (fullIn * pricing.input) / 1e6;
+    const inputCost = !useCache
+      ? (fullIn * pricing.input) / 1e6
+      : i === 0
+        ? (ctx * pricing.cacheWrite + newIn * pricing.input) / 1e6
+        : (ctx * pricing.cacheRead  + newIn * pricing.input) / 1e6;
 
     const outCost = (modelOutput * pricing.output) / 1e6;
     const turnCost = inputCost + outCost;

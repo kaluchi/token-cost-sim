@@ -15,7 +15,9 @@ import { simulate } from './src/core/simulate.js';
 import { MODELS } from './src/core/models.js';
 import { fmtCost, fmtN } from './src/core/format.js';
 
-const PR = MODELS.sonnet;   // $3 input / $15 output / $0.30 cache_read
+const args     = process.argv.slice(2);
+const modelKey = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'sonnet';
+const PR = MODELS[modelKey] ?? MODELS.sonnet;
 
 // ─── Helpers ──────────────────────────────────────────────────────
 const line = (c = '─', n = 76) => c.repeat(n);
@@ -83,7 +85,7 @@ const SCENARIOS = [
 
 // ─── Print ────────────────────────────────────────────────────────
 console.log('\n' + line('═'));
-console.log(' AGENT vs ONE-SHOT RAG — экономический анализ   (Sonnet 4.6 + Prompt Caching)');
+console.log(` AGENT vs ONE-SHOT RAG — экономический анализ   (${PR.name} + Prompt Caching)`);
 console.log(line('═'));
 
 for (const sc of SCENARIOS) {
@@ -149,7 +151,7 @@ for (const sc of SCENARIOS) {
 // ─── Sensitivity table ────────────────────────────────────────────
 console.log('\n' + line('═'));
 console.log(' ЧУВСТВИТЕЛЬНОСТЬ: break-even при разных bootstrap и RAG doc sizes');
-console.log(' Агент: toolResult=5k, userMsg=500, modelOutput=2k. Sonnet 4.6 + кэш.');
+console.log(` Агент: toolResult=5k, userMsg=500, modelOutput=2k. ${PR.name} + кэш.`);
 console.log(line('═'));
 
 const ragSizes  = [30_000, 80_000, 150_000, 300_000];

@@ -1,12 +1,12 @@
-import Chart from 'chart.js/auto';
-import { MODELS } from '../core/models.js';
 import { fmtN, fmtMT, fmtCost } from '../core/format.js';
 import { injectNav } from './nav.js';
+import {
+  sv, setModel as _setModel, pricing, createStorage,
+  mkChart, mkDS, chartOpts, autoFmt, pad,
+} from './shared.js';
 import './style.css';
 
 injectNav('tax');
-
-const STORAGE_KEY = 'tcs_tax_v2';
 
 const DEFAULTS = {
   sys_tok: 20000, target_ctx: 200000,
@@ -15,74 +15,12 @@ const DEFAULTS = {
   p_in: 3, p_out: 15, p_cr: 0.30, p_cw: 3.75,
   useCache: true,
 };
+const SLIDERS = ['sys_tok','target_ctx','prompt_a','data_a','out_a','prompt_b','data_b','out_b'];
+const store = createStorage('tcs_tax_v2', DEFAULTS);
 
-function saveToStorage() {
-  const state = {};
-  Object.keys(DEFAULTS).forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    state[id] = el.type === 'checkbox' ? el.checked : el.value;
-  });
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
-}
-
-function loadFromStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const state = JSON.parse(raw);
-    Object.entries(state).forEach(([id, val]) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (el.type === 'checkbox') el.checked = !!val;
-      else el.value = val;
-    });
-    return true;
-  } catch { return false; }
-}
-
-export function resetToDefaults() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
-  Object.entries(DEFAULTS).forEach(([id, val]) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (el.type === 'checkbox') el.checked = val;
-    else el.value = val;
-  });
-  document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.mbtn[data-model="sonnet"]')?.classList.add('active');
-  ['sys_tok','target_ctx','prompt_a','data_a','out_a','prompt_b','data_b','out_b'].forEach(sv);
-  update();
-}
-window.resetToDefaults = resetToDefaults;
-
-export function sv(id) {
-  const el = document.getElementById(id);
-  document.getElementById('v_' + id).textContent = Number(el.value).toLocaleString('ru-RU');
-}
 window.sv = sv;
-
-export function setModel(key, btn) {
-  document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  if (key === 'custom') return;
-  const m = MODELS[key];
-  document.getElementById('p_in').value  = m.input;
-  document.getElementById('p_out').value = m.output;
-  document.getElementById('p_cr').value  = m.cacheRead;
-  document.getElementById('p_cw').value  = m.cacheWrite;
-  update();
-}
-window.setModel = setModel;
-
-function pricing() {
-  return {
-    input:      +document.getElementById('p_in').value,
-    output:     +document.getElementById('p_out').value,
-    cacheRead:  +document.getElementById('p_cr').value,
-    cacheWrite: +document.getElementById('p_cw').value,
-  };
-}
+window.setModel = (key, btn) => _setModel(key, btn, update);
+window.resetToDefaults = () => store.reset(SLIDERS, update);
 
 function deriveN(target, sysTok, prompt, dataPer, outPer) {
   const delta = dataPer + outPer;
@@ -90,6 +28,7 @@ function deriveN(target, sysTok, prompt, dataPer, outPer) {
   return Math.max(1, Math.round((target - sysTok - prompt) / delta));
 }
 
+// Cost formula kept in sync with src/core/simulate.js
 function decompose(sysTok, prompt, nTurns, dataPer, outPer, pr, useCache) {
   const turns = [];
   let ctx = sysTok + prompt;
@@ -106,13 +45,17 @@ function decompose(sysTok, prompt, nTurns, dataPer, outPer, pr, useCache) {
     cumOut     += outPer;
 
     let cSys, cUser;
-    if (useCache && k > 0) {
+    if (!useCache) {
+      cSys  = sysTok * pr.input / 1e6;
+      cUser = userIn * pr.input / 1e6;
+    } else if (k === 0) {
+      const history = ctx - sysTok;
+      cSys  = sysTok  * pr.cacheWrite / 1e6;
+      cUser = history * pr.cacheWrite / 1e6 + dataPer * pr.input / 1e6;
+    } else {
       const history = ctx - sysTok;
       cSys  = sysTok  * pr.cacheRead / 1e6;
       cUser = history * pr.cacheRead / 1e6 + dataPer * pr.input / 1e6;
-    } else {
-      cSys  = sysTok * pr.input / 1e6;
-      cUser = userIn * pr.input / 1e6;
     }
     const cOut = outPer * pr.output / 1e6;
 
@@ -145,61 +88,6 @@ function decompose(sysTok, prompt, nTurns, dataPer, outPer, pr, useCache) {
   };
 }
 
-// ── Chart helpers ──────────────────────────────────────────────────
-const CHARTS = {};
-const GRID   = { color: 'rgba(255,255,255,0.04)' };
-const TICK   = { color: '#64748b', font: { size: 11 } };
-const LEGEND = { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } };
-
-function mkDS(label, data, color, dash = [], fill = false, pr = 0) {
-  return {
-    label, data,
-    borderColor: color,
-    backgroundColor: fill ? color.replace('rgb', 'rgba').replace(')', ',0.08)') : 'transparent',
-    borderDash: dash, fill, tension: 0.3,
-    pointRadius: pr, pointHoverRadius: pr > 0 ? pr + 2 : 4,
-    borderWidth: dash.length ? 1.5 : 2,
-  };
-}
-
-function chartOpts(yFmt, xTitle = '', { yMin, suggestedMax } = {}) {
-  return {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: LEGEND },
-    scales: {
-      x: {
-        ticks: { ...TICK, maxTicksLimit: 12 }, grid: GRID,
-        title: xTitle ? { display: true, text: xTitle, color: '#64748b', font: { size: 11 } } : undefined,
-      },
-      y: {
-        ticks: { ...TICK, callback: yFmt }, grid: GRID,
-        ...(yMin !== undefined && { min: yMin }),
-        ...(suggestedMax !== undefined && { suggestedMax }),
-      },
-    },
-    interaction: { intersect: false, mode: 'index' },
-  };
-}
-
-function autoFmt(maxVal) {
-  if (maxVal >= 10)   return v => '$' + v.toFixed(1);
-  if (maxVal >= 1)    return v => '$' + v.toFixed(2);
-  if (maxVal >= 0.1)  return v => '$' + v.toFixed(3);
-  if (maxVal >= 0.01) return v => '$' + v.toFixed(4);
-  return v => '$' + v.toExponential(2);
-}
-
-function mkChart(id, cfg) {
-  if (CHARTS[id]) CHARTS[id].destroy();
-  CHARTS[id] = new Chart(document.getElementById(id), cfg);
-}
-
-function pad(arr, n) {
-  const r = [...arr];
-  while (r.length < n) r.push(null);
-  return r;
-}
-
 // ── Visual bars ───────────────────────────────────────────────────
 function renderCtxBar(sysTok, target) {
   const budget = target - sysTok;
@@ -225,7 +113,7 @@ function renderPathBar(id, sysTok, prompt, nTurns, dataPer, outPer) {
 }
 
 // ── Main update ───────────────────────────────────────────────────
-export function update() {
+function update() {
   const pr       = pricing();
   const useCache = document.getElementById('useCache').checked;
   const sysTok   = +document.getElementById('sys_tok').value;
@@ -245,12 +133,10 @@ export function update() {
 
   const $ = id => document.getElementById(id);
 
-  // ── Frame & path bars ───────────────────────────────────────
   renderCtxBar(sysTok, target);
   renderPathBar('barA', sysTok, pA, nA, dA, oA);
   renderPathBar('barB', sysTok, pB, nB, dB, oB);
 
-  // ── Path A stats ────────────────────────────────────────────
   $('s_nA').textContent    = nA;
   $('s_fcA').textContent   = fmtN(simA.finalContext);
   $('s_costA').textContent = fmtCost(simA.totalCost);
@@ -258,7 +144,6 @@ export function update() {
   $('s_sumA').textContent  = fmtMT(simA.totalInput) + ' MTok';
   $('s_outA').textContent  = fmtMT(simA.totalOutput) + ' MTok';
 
-  // ── Path B stats ────────────────────────────────────────────
   $('s_nB').textContent    = nB;
   $('s_fcB').textContent   = fmtN(simB.finalContext);
   $('s_costB').textContent = fmtCost(simB.totalCost);
@@ -266,13 +151,11 @@ export function update() {
   $('s_sumB').textContent  = fmtMT(simB.totalInput) + ' MTok';
   $('s_outB').textContent  = fmtMT(simB.totalOutput) + ' MTok';
 
-  // ── Comparison banner ───────────────────────────────────────
   $('bc_a').textContent   = fmtCost(simA.totalCost);
   $('bc_a_d').textContent = `${nA} итер. · ${fmtN(simA.finalContext)} финал · Σ ${fmtMT(simA.totalInput)} MTok`;
   $('bc_b').textContent   = fmtCost(simB.totalCost);
   $('bc_b_d').textContent = `${nB} итер. · ${fmtN(simB.finalContext)} финал · Σ ${fmtMT(simB.totalInput)} MTok`;
 
-  // B — база (100%), считаем переплату A относительно B
   const overpay    = simA.totalCost - simB.totalCost;
   const overPayPct = simB.totalCost > 0 ? (overpay / simB.totalCost * 100).toFixed(1) : '0.0';
   const bWins      = overpay > 0;
@@ -288,7 +171,6 @@ export function update() {
   $('vs_iters').textContent  = `${nB} vs ${nA}`;
   $('vs_iters_d').textContent = `Δ ${Math.abs(nA - nB)} итераций`;
 
-  // ── Info box ────────────────────────────────────────────────
   const ib = $('infoBox');
   if (bWins) {
     ib.className = 'info-box info-ok';
@@ -301,20 +183,17 @@ export function update() {
       `крупный промт и большие tool results не окупились при данных параметрах.`;
   }
 
-  // ── Crossover metrics ───────────────────────────────────────
   $('m_lcA').textContent = simA.linearCrossover ? `N = ${simA.linearCrossover}` : '> N';
   $('m_ccA').textContent = simA.cumCrossover    ? `N = ${simA.cumCrossover}`    : '> N';
   $('m_lcB').textContent = simB.linearCrossover ? `N = ${simB.linearCrossover}` : '> N';
   $('m_ccB').textContent = simB.cumCrossover    ? `N = ${simB.cumCrossover}`    : '> N';
 
-  // ── Charts ──────────────────────────────────────────────────
   const maxTurns = Math.max(nA, nB);
   const labels   = Array.from({ length: maxTurns }, (_, i) => i + 1);
   const noP      = n => n > 40 ? 0 : 3;
   const tA = simA.turns;
   const tB = simB.turns;
 
-  // 1 — Context growth (linear)
   mkChart('chCtx', {
     type: 'line',
     data: { labels, datasets: [
@@ -326,7 +205,6 @@ export function update() {
     options: chartOpts(v => fmtN(v), 'N', { yMin: 0 }),
   });
 
-  // 2 — Cumulative input tokens (parabolic)
   mkChart('chCumTok', {
     type: 'line',
     data: { labels, datasets: [
@@ -338,7 +216,6 @@ export function update() {
     options: chartOpts(v => fmtN(v), 'N', { yMin: 0 }),
   });
 
-  // 3 — Cumulative cost ($)
   const maxCost = Math.max(simA.totalCost, simB.totalCost);
   mkChart('chCumCost', {
     type: 'line',
@@ -351,7 +228,6 @@ export function update() {
     options: chartOpts(autoFmt(maxCost), 'N', { yMin: 0 }),
   });
 
-  // 4 — Per-turn cost
   const maxTurnCost = Math.max(...tA.map(t => t.turnCost), ...tB.map(t => t.turnCost));
   mkChart('chTurn', {
     type: 'line',
@@ -362,7 +238,6 @@ export function update() {
     options: chartOpts(autoFmt(maxTurnCost), 'N', { yMin: 0 }),
   });
 
-  // 5 — System share %
   mkChart('chShare', {
     type: 'line',
     data: { labels, datasets: [
@@ -375,7 +250,6 @@ export function update() {
     options: chartOpts(v => v.toFixed(0) + '%', 'N', { yMin: 0, suggestedMax: 100 }),
   });
 
-  // 6 — Sensitivity: target context
   const targets = Array.from({ length: 20 }, (_, i) => (i + 1) * 50_000);
   const sensB = targets.map(t => {
     const n = deriveN(t, sysTok, pB, dB, oB);
@@ -397,7 +271,6 @@ export function update() {
     options: chartOpts(autoFmt(Math.max(...sensA, ...sensB)), 'Целевой контекст', { yMin: 0 }),
   });
 
-  // ── Dynamic conclusion ──────────────────────────────────────
   const dc = $('dynConclusion');
   const tokRatio = (simA.totalInput / simB.totalInput).toFixed(1);
   dc.innerHTML =
@@ -415,13 +288,12 @@ export function update() {
     (simB.cumCrossover ? `<br>Σ Crossover крупных: N = ${simB.cumCrossover}.` : '') +
     (simA.cumCrossover ? ` Σ Crossover мелких: N = ${simA.cumCrossover}.` : '');
 
-  saveToStorage();
+  store.save();
 }
 window.update = update;
 
-// ── Init ──────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
-  loadFromStorage();
-  ['sys_tok','target_ctx','prompt_a','data_a','out_a','prompt_b','data_b','out_b'].forEach(sv);
+  store.load();
+  SLIDERS.forEach(sv);
   update();
 });
